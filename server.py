@@ -1,5 +1,5 @@
 import socket
-from threading import Thread, Event
+from threading import Thread, Event, Timer
 import pickle
 import time
 
@@ -40,6 +40,9 @@ class Room(Thread):
         self.rem_player(player)
     
     def refresh(self):
+        if not self.game_start.is_set():
+            self.game_start.set()
+
         for player in self.players:
             self.rem_player(player)
 
@@ -47,7 +50,10 @@ class Room(Thread):
         self.game_start.set()
         self.notify(f'Игрок {player.name} проиграл')
         
-
+    def kick_player(self, player):
+        self.exit(player)
+        self.refresh()
+        self.server.disconect_client(player.conn, 'Уходи')
 
     def change(self, player):
         self.rem_player(player)
@@ -67,6 +73,11 @@ class Room(Thread):
             return 0, f"Город должен начинаться на букву {self.words[-1][-1]}"
         return 1, ''
 
+    def time_out(self, player):
+        self.lose(player)
+        self.change(player)
+        self.exit_another()
+
     def run(self):
         while True:
             self.words = []
@@ -80,6 +91,8 @@ class Room(Thread):
             player_step = 0
             curr_player = self.players[player_step]
             while not self.game_start.is_set():
+                timer = Timer(15.0, self.time_out, (curr_player,))
+                timer.start()
                 data = self.server.recv(curr_player.conn)
                 if data:
                     status, message = self.check_data(data)
@@ -90,16 +103,19 @@ class Room(Thread):
                             self.words.append(data.strip().lower())
                             player_step = 0 if player_step else 1
                             curr_player = self.players[player_step]
+                            timer.cancel()
                         case 0:
                             self.server.send(curr_player.conn, message)
                         case -1:
                             self.lose(curr_player)
                             self.exit(curr_player)
                             self.exit_another()
+                            timer.cancel()
                         case -2:
                             self.lose(curr_player)
                             self.change(curr_player)
                             self.exit_another()
+                            timer.cancel()
             else:
                 self.refresh()
 
